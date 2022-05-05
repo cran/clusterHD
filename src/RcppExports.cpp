@@ -11,55 +11,54 @@ Rcpp::Rostream<true>&  Rcpp::Rcout = Rcpp::Rcpp_cout_get();
 Rcpp::Rostream<false>& Rcpp::Rcerr = Rcpp::Rcpp_cerr_get();
 #endif
 
-// rcpparma_hello_world
-arma::mat rcpparma_hello_world();
-RcppExport SEXP _clusterHD_rcpparma_hello_world() {
+// getCenters_cpp2
+Rcpp::List getCenters_cpp2(arma::mat& X, arma::vec clusID, arma::uword k, double lambda);
+RcppExport SEXP _clusterHD_getCenters_cpp2(SEXP XSEXP, SEXP clusIDSEXP, SEXP kSEXP, SEXP lambdaSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
-    rcpp_result_gen = Rcpp::wrap(rcpparma_hello_world());
+    Rcpp::traits::input_parameter< arma::mat& >::type X(XSEXP);
+    Rcpp::traits::input_parameter< arma::vec >::type clusID(clusIDSEXP);
+    Rcpp::traits::input_parameter< arma::uword >::type k(kSEXP);
+    Rcpp::traits::input_parameter< double >::type lambda(lambdaSEXP);
+    rcpp_result_gen = Rcpp::wrap(getCenters_cpp2(X, clusID, k, lambda));
     return rcpp_result_gen;
 END_RCPP
 }
-// rcpparma_outerproduct
-arma::mat rcpparma_outerproduct(const arma::colvec& x);
-RcppExport SEXP _clusterHD_rcpparma_outerproduct(SEXP xSEXP) {
+// HTKmeans_inner_cpp
+Rcpp::List HTKmeans_inner_cpp(arma::mat X, arma::mat initcenters, arma::vec initIDs, double lambda, arma::uword iter_max);
+RcppExport SEXP _clusterHD_HTKmeans_inner_cpp(SEXP XSEXP, SEXP initcentersSEXP, SEXP initIDsSEXP, SEXP lambdaSEXP, SEXP iter_maxSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
-    Rcpp::traits::input_parameter< const arma::colvec& >::type x(xSEXP);
-    rcpp_result_gen = Rcpp::wrap(rcpparma_outerproduct(x));
+    Rcpp::traits::input_parameter< arma::mat >::type X(XSEXP);
+    Rcpp::traits::input_parameter< arma::mat >::type initcenters(initcentersSEXP);
+    Rcpp::traits::input_parameter< arma::vec >::type initIDs(initIDsSEXP);
+    Rcpp::traits::input_parameter< double >::type lambda(lambdaSEXP);
+    Rcpp::traits::input_parameter< arma::uword >::type iter_max(iter_maxSEXP);
+    rcpp_result_gen = Rcpp::wrap(HTKmeans_inner_cpp(X, initcenters, initIDs, lambda, iter_max));
     return rcpp_result_gen;
 END_RCPP
 }
-// rcpparma_innerproduct
-double rcpparma_innerproduct(const arma::colvec& x);
-RcppExport SEXP _clusterHD_rcpparma_innerproduct(SEXP xSEXP) {
+// getObjective_cpp
+Rcpp::List getObjective_cpp(arma::mat& X, arma::mat& centers, arma::uvec IDs, double lambda);
+RcppExport SEXP _clusterHD_getObjective_cpp(SEXP XSEXP, SEXP centersSEXP, SEXP IDsSEXP, SEXP lambdaSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
-    Rcpp::traits::input_parameter< const arma::colvec& >::type x(xSEXP);
-    rcpp_result_gen = Rcpp::wrap(rcpparma_innerproduct(x));
-    return rcpp_result_gen;
-END_RCPP
-}
-// rcpparma_bothproducts
-Rcpp::List rcpparma_bothproducts(const arma::colvec& x);
-RcppExport SEXP _clusterHD_rcpparma_bothproducts(SEXP xSEXP) {
-BEGIN_RCPP
-    Rcpp::RObject rcpp_result_gen;
-    Rcpp::RNGScope rcpp_rngScope_gen;
-    Rcpp::traits::input_parameter< const arma::colvec& >::type x(xSEXP);
-    rcpp_result_gen = Rcpp::wrap(rcpparma_bothproducts(x));
+    Rcpp::traits::input_parameter< arma::mat& >::type X(XSEXP);
+    Rcpp::traits::input_parameter< arma::mat& >::type centers(centersSEXP);
+    Rcpp::traits::input_parameter< arma::uvec >::type IDs(IDsSEXP);
+    Rcpp::traits::input_parameter< double >::type lambda(lambdaSEXP);
+    rcpp_result_gen = Rcpp::wrap(getObjective_cpp(X, centers, IDs, lambda));
     return rcpp_result_gen;
 END_RCPP
 }
 
 static const R_CallMethodDef CallEntries[] = {
-    {"_clusterHD_rcpparma_hello_world", (DL_FUNC) &_clusterHD_rcpparma_hello_world, 0},
-    {"_clusterHD_rcpparma_outerproduct", (DL_FUNC) &_clusterHD_rcpparma_outerproduct, 1},
-    {"_clusterHD_rcpparma_innerproduct", (DL_FUNC) &_clusterHD_rcpparma_innerproduct, 1},
-    {"_clusterHD_rcpparma_bothproducts", (DL_FUNC) &_clusterHD_rcpparma_bothproducts, 1},
+    {"_clusterHD_getCenters_cpp2", (DL_FUNC) &_clusterHD_getCenters_cpp2, 4},
+    {"_clusterHD_HTKmeans_inner_cpp", (DL_FUNC) &_clusterHD_HTKmeans_inner_cpp, 5},
+    {"_clusterHD_getObjective_cpp", (DL_FUNC) &_clusterHD_getObjective_cpp, 4},
     {NULL, NULL, 0}
 };
 

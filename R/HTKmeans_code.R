@@ -29,23 +29,38 @@ HTKmeans <- function(X, k, lambdas,
                     X = X)
   if (standardize) {
     X <- scale(X)
+  } else {
+    X <- scale(X, center = TRUE, scale = FALSE)
   }
+  
   HTKmeans.out <- list()
-  lambdas     <- sort(lambdas)
+  lambdas      <- sort(lambdas)
+  startval.out <- getStartvalues(X = X, k = k,
+                                 iter.max = iter.max,
+                                 nstart = nstart)
   
   for (i in 1:length(lambdas)) {
-    startval.out <- getStartvalues(X = X, k = k,
-                                   lambda = lambdas[i],
-                                   iter.max = iter.max,
-                                   nstart = nstart)
-    centers    <- startval.out$centers
-    IDs        <- startval.out$IDs
+    centers <- list()
+    objvals <- rep(0, length(startval.out))
+    for (j in 1:length(startval.out)) {
+      centers[[j]]  <- getCenters_cpp2(X = X,
+                                  clusID = startval.out[[j]],
+                                  k = k,
+                                  lambda = lambdas[i])$centers
+      objvals[j]    <- getObjective_cpp(X, centers[[j]],
+                                        startval.out[[j]],
+                                        lambdas[i])$obj
+    }
+    # initial centers and IDs:
+    centers <- centers[[which.min(objvals)]]
+    IDs     <- startval.out[[which.min(objvals)]]
     
-    HTKmeans.out[[i]] <- HTKmeans_inner(X = X,
-                                        centers = centers,
-                                        lambda =  lambdas[i],
-                                        iter.max = iter.max, 
-                                        oldIDs = IDs)
+    
+    HTKmeans.out[[i]] <- HTKmeans_inner_cpp(X,
+                                            centers,
+                                            IDs,
+                                            lambdas[i],
+                                            iter.max)
     if (max(abs(HTKmeans.out[[i]]$centers)) < 1e-10) {
       HTKmeans.out[[i]]$cluster <- rep(0, dim(X)[1])
       if (i < length(lambdas)) {
@@ -56,10 +71,14 @@ HTKmeans <- function(X, k, lambdas,
       }
     }
   }
-  
-  HTKmeans.out$inputargs <- inputargs
-  return(HTKmeans.out)
+  output <- list()
+  output$HTKmeans.out <- HTKmeans.out
+  output$inputargs <- inputargs
+  return(output)
 }
+
+
+
 
 
 ####################################
@@ -82,45 +101,6 @@ getIDs <- function(X, lambda, centers, oldIDs) {
   return(IDs)
 }
 
-getObj <- function(X, IDs, centers, lambda) {
-  # calculates the value of the objective function
-  # 
-  
-  n            <- dim(X)[1]
-  obj          <- 0 # full objective function
-  obj_penalty  <- 0 # penalty part of the objective function
-  WCSS         <- 0 # within cluster sums of squares, scaled by n
-  WCSS_nonZero <- 0 # WCSS for the non-zero variables, scaled by n
-  
-  nonzeroCenters <- which(apply(centers, 2, function(y) sum(abs(y))) > 0)
-  
-  if (length(nonzeroCenters) == 0) {
-    obj <- WCSS <- sum(X^2) / n
-    WCSS_nonZero <- 0
-    obj_penalty <- 0
-  } else {
-    
-    for (i in 1:n) {
-      x     <- X[i, ]
-      id    <- IDs[i]
-      WCSS_ctb     <- sum((x - centers[id, ])^2) / n
-      WCSS_nZ_ctb  <- sum((x[nonzeroCenters] - centers[id, nonzeroCenters])^2) / n
-      WCSS         <- WCSS + WCSS_ctb
-      WCSS_nonZero <- WCSS_nonZero + WCSS_nZ_ctb
-    }
-    
-    lambda <- rep(lambda, dim(centers)[2])
-    obj_penalty <- sum(lambda * (apply(centers, 2, function(y) sum(y^2)) > 0))
-    obj <- obj_penalty + WCSS
-  }
-  return(list(obj = obj,
-              obj_penalty = obj_penalty,
-              WCSS = WCSS,
-              WCSS_nonZero = WCSS_nonZero, 
-              nBactive = length(nonzeroCenters), 
-              activeVars = nonzeroCenters))
-  
-}
 
 getClassicCenters <- function(X, clusID, k) {
   # calculate classical centers
@@ -131,7 +111,7 @@ getClassicCenters <- function(X, clusID, k) {
   return(t(muhat))
 }
 
-getCenters <- function(X, clusID, k,
+getCenters2 <- function(X, clusID, k,
                        lambda,
                        iter.max = 100) {
   # Updates the centers for the regularized k-means, assuming fixed
@@ -162,9 +142,38 @@ getCenters <- function(X, clusID, k,
   return(centers)
 }
 
-getStartvalues <- function(X, k, lambda, 
+
+getStartvalues <- function(X, k, 
                            iter.max,
                            nstart) {
+  # returns initial IDs
+  #
+  
+  km.out   <- kmeans(X, centers = k, nstart = nstart)
+  meansize <- apply(km.out$centers, 2, function(y) sum(y^2))
+  
+  pervars  <- c(1, 2, 5, 10, 25, 50, 100) / 100
+  ordering <- order(meansize, decreasing = TRUE)
+  IDs <- list()
+  for (i in 1:length(pervars)) {
+    Inds <- ordering[1:(pervars[i] * dim(X)[2])]
+    if (length(Inds) > 0) {
+      if (i == length(pervars)) {
+        kmeans.out <- km.out
+      } else {
+        kmeans.out <- kmeans(X[, Inds], k, nstart = nstart)
+      }
+      IDs[[i]]      <- kmeans.out$cluster
+    }
+  }
+  
+  return(IDs)
+}
+
+
+getStartvalues2 <- function(X, k, lambda, 
+                            iter.max,
+                            nstart) {
   # returns initial centers
   #
   
@@ -188,12 +197,12 @@ getStartvalues <- function(X, k, lambda,
         } else {
           kmeans.out <- kmeans(X[, Inds], k, nstart = nstart)
         }
-        centers[[i]]  <- getCenters(X = X, clusID = kmeans.out$cluster, k = k,
+        centers[[i]]  <- getCenters2(X = X, clusID = kmeans.out$cluster, k = k,
                                     lambda = lambda,
                                     iter.max = iter.max)
         IDs[[i]]      <- kmeans.out$cluster
-        objvals[i]    <- getObj(X = X, IDs = kmeans.out$cluster,
-                                centers = centers[[i]], lambda = lambda)$obj
+        objvals[i]    <- getObjective_cpp(X, centers[[i]],
+                                          kmeans.out$cluster,lambda)$obj
       }
     }
     centers <- centers[[which.min(objvals)]]
@@ -201,43 +210,6 @@ getStartvalues <- function(X, k, lambda,
   }
   
   return(list(centers = centers, IDs = IDs))
-}
-
-HTKmeans_inner <- function(X, centers, lambda,
-                           iter.max, oldIDs) {
-  # iterates the two steps of Lloyds algorithm
-  #
-  
-  n         <- dim(X)[1]
-  converged <- FALSE
-  clusIDOld <- rep(0, n)
-  itnb      <- 0
-  k         <- dim(centers)[1]
-  clusID    <- oldIDs
-  
-  # start iteration
-  while ((itnb < iter.max) & !converged ) {
-    # Get new cluster assignments
-    clusID <- getIDs(X, lambda, centers,
-                     oldIDs = clusID)
-    
-    if (length(unique(clusID)) != k) {
-      centers <- matrix(0, k, dim(X)[2])
-      converged <- FALSE
-      break
-    }
-    
-    # get new centers
-    centers  <- getCenters(X = X, clusID = clusID, k = k,
-                           lambda = lambda)
-    converged <- sum(abs(clusID - clusIDOld)) == 0
-    clusIDOld <- clusID
-    itnb      <- itnb + 1
-  }
-  return(list(centers = centers,
-              cluster = clusID,
-              itnb = itnb,
-              converged = converged))
 }
 
 
@@ -253,65 +225,65 @@ diagPlot = function(HTKmeans.out, type = 1)  {
   on.exit(par(oldpar))
   
   if (type == 1) {
-  inputargs <- HTKmeans.out$inputargs
-  lambdas <- inputargs$lambdas
-  
-  plotdata <- sapply(1:length(lambdas),
-                     function(z)
-                       colSums(abs(HTKmeans.out[[z]]$centers)))
-  xlims <- rev(range(inputargs$lambdas))
-  
-  matplot(lambdas, t(plotdata), type = "l",
-          xlab = expression(lambda), ylab = "norm of center vector",
-          col = 1:ncol(plotdata), xlim = xlims, lwd = 4, lty = 1,
-          cex.lab = 2, cex.axis = 2)
-  
+    inputargs <- HTKmeans.out$inputargs
+    lambdas <- inputargs$lambdas
+    
+    plotdata <- sapply(1:length(lambdas),
+                       function(z)
+                         colSums(abs(HTKmeans.out$HTKmeans.out[[z]]$centers)))
+    xlims <- rev(range(inputargs$lambdas))
+    
+    matplot(lambdas, t(plotdata), type = "l",
+            xlab = expression(lambda), ylab = "norm of center vector",
+            col = 1:ncol(plotdata), xlim = xlims, lwd = 4, lty = 1,
+            cex.lab = 2, cex.axis = 2)
+    
   } else {
-  
-  
-  clusterInfo <- extractClusterInfo(HTKmeans.out,  summarize = TRUE)
-  IDmat <- matrix(unlist(clusterInfo$IDs),
-                  ncol = length(clusterInfo$IDs), byrow = FALSE)
-  
-  deltaARI <- rep(0, dim(IDmat)[2] - 1)
-  for (i in 1:(dim(IDmat)[2] - 1)) {
-    deltaARI[i] <-  1 - mclust::adjustedRandIndex(IDmat[, i+1], IDmat[,i])
-  }
-  
-  par(mar=c(3.5, 5, 1.5, 6))
-  
-  plot(rev(clusterInfo$nbActiveVars)[-1],
-       diff(rev(clusterInfo$WCSS_active)) /
-         diff(rev(clusterInfo$nbActiveVars)),
-       ylab = "",
-       xlab = "",
-       type = "l", lwd = 3,axes = FALSE,
-       ylim = c(0, 1))
-  axis(2, ylim=c(0,1),col="black",las=1, lwd = 3,
-       lwd.ticks = 2, cex.axis = 2)  ## las=1 makes horizontal labels
-  mtext(expression(paste(Delta," WCSS")), side=2, line=3.5, cex = 2)
-  
-  
-  ## Allow a second plot on the same graph
-  par(new=TRUE)
-  
-  # plot delta ARI
-  plot(clusterInfo$nbActiveVars[-c(length(deltaARI), length(deltaARI)-1)],
-       deltaARI[-c(length(deltaARI))],
-       xlab="", ylab="", ylim = c(0, 1),
-       axes=FALSE, type="l", xlim = c(1,max(clusterInfo$nbActiveVars)),
-       col="firebrick", lwd = 3)
-  mtext(expression(paste(Delta," ARI")),side=4,col="firebrick",line=4, cex = 2) 
-  axis(4, ylim=c(0, 1), col="firebrick",col.axis="firebrick",
-       las=1, cex.axis = 2, 
-       lwd = 3, lwd.ticks = 2, at = seq(0,1, by = 0.2),
-       labels = seq(0,1, by = 0.2))
-  
-  ## Draw the x axis
-  axis(1,seq(max(clusterInfo$nbActiveVars), 1, -1),lwd = 3,
-       lwd.ticks = 2, cex.axis = 2)
-  mtext("Number of active variables",
-        side=1,col="black",line=2.5, cex = 2)  
+    
+    
+    clusterInfo <- extractClusterInfo(HTKmeans.out,  summarize = TRUE)
+    IDmat <- matrix(unlist(clusterInfo$IDs),
+                    ncol = length(clusterInfo$IDs), byrow = FALSE)
+    
+    deltaARI <- rep(0, dim(IDmat)[2] - 1)
+    for (i in 1:(dim(IDmat)[2] - 1)) {
+      deltaARI[i] <-  1 - mclust::adjustedRandIndex(IDmat[, i+1], IDmat[,i])
+    }
+    
+    par(mar=c(3.5, 5, 1.5, 6))
+    
+    plot(rev(clusterInfo$nbActiveVars)[-1],
+         diff(rev(clusterInfo$WCSS_active)) /
+           diff(rev(clusterInfo$nbActiveVars)),
+         ylab = "",
+         xlab = "",
+         type = "l", lwd = 3,axes = FALSE,
+         ylim = c(0, 1))
+    axis(2, ylim=c(0,1),col="black",las=1, lwd = 3,
+         lwd.ticks = 2, cex.axis = 2)  ## las=1 makes horizontal labels
+    mtext(expression(paste(Delta," WCSS")), side=2, line=3.5, cex = 2)
+    
+    
+    ## Allow a second plot on the same graph
+    par(new=TRUE)
+    
+    # plot delta ARI
+    plot(clusterInfo$nbActiveVars[-c(length(deltaARI), length(deltaARI)-1)],
+         deltaARI[-c(length(deltaARI))],
+         xlab="", ylab="", ylim = c(0, 1),
+         axes=FALSE, type="l", xlim = c(1,max(clusterInfo$nbActiveVars)),
+         col="firebrick", lwd = 3)
+    mtext(expression(paste(Delta," ARI")),side=4,col="firebrick",line=4, cex = 2) 
+    axis(4, ylim=c(0, 1), col="firebrick",col.axis="firebrick",
+         las=1, cex.axis = 2, 
+         lwd = 3, lwd.ticks = 2, at = seq(0,1, by = 0.2),
+         labels = seq(0,1, by = 0.2))
+    
+    ## Draw the x axis
+    axis(1,seq(max(clusterInfo$nbActiveVars), 1, -1),lwd = 3,
+         lwd.ticks = 2, cex.axis = 2)
+    mtext("Number of active variables",
+          side=1,col="black",line=2.5, cex = 2)  
   }
 }
 
@@ -323,7 +295,7 @@ extractClusterInfo <- function(HTKmeans.out,
   #
   
   lambdas    <- HTKmeans.out$inputargs$lambdas
-  objective  <- penalty <- WCSS <- WCSS_nonZero  <- nbActiveVars <- ARIs <- rep(0, length(lambdas))
+  objective  <- penalty <- WCSS <- WCSS_nonZero <- nbActiveVars <- ARIs <- rep(0, length(lambdas))
   activeVars <- list()
   centers    <- list()
   IDs        <- list()
@@ -331,28 +303,27 @@ extractClusterInfo <- function(HTKmeans.out,
   if (HTKmeans.out$inputargs$standardize) {
     Z <- scale(HTKmeans.out$inputargs$X)
   } else {
-    Z <- HTKmeans.out$inputargs$X
+    Z <- scale(HTKmeans.out$inputargs$X, scale = FALSE)
   }
   for (i in 1:length(lambdas)) {
-    temp <- getObj(X = Z, IDs = HTKmeans.out[[i]]$cluster, 
-                   centers = HTKmeans.out[[i]]$centers,
-                   lambda = lambdas[i])
-    WCSS[i]         <- temp$WCSS
+    temp <- getObjective_cpp(Z, HTKmeans.out$HTKmeans.out[[i]]$centers,
+                             HTKmeans.out$HTKmeans.out[[i]]$cluster, lambdas[i])
+    WCSS[i]         <- temp$obj_WCSS
     objective[i]    <- temp$obj
     penalty[i]      <- temp$obj_penalty
     WCSS_nonZero[i] <- temp$WCSS_nonZero
-    nbActiveVars[i] <- temp$nBactive
+    nbActiveVars[i] <- temp$nbActive
     activeVars[[i]] <- temp$activeVars
-    IDs[[i]]        <- HTKmeans.out[[i]]$cluster
-    centers[[i]] <-  HTKmeans.out[[i]]$centers
+    IDs[[i]]        <- HTKmeans.out$HTKmeans.out[[i]]$cluster
+    centers[[i]]    <- HTKmeans.out$HTKmeans.out[[i]]$centers
     if (!is.null(y)) {
-      ARIs[i] <- mclust::adjustedRandIndex(HTKmeans.out[[i]]$cluster, y)
+      ARIs[i] <- mclust::adjustedRandIndex(HTKmeans.out$HTKmeans.out[[i]]$cluster, y)
     }
   }
   
   if (summarize) {
     uniqNbVars <- sort(unique(nbActiveVars), decreasing = TRUE)
-    objective_sum <- penalty_sum <- WCSS_sum <- WCSS_nonZero_sum  <- nbActiveVars_sum <- ARIs_sum <- rep(0, length(uniqNbVars))
+    objective_sum <- penalty_sum <- WCSS_sum  <- WCSS_nonZero_sum <- nbActiveVars_sum <- ARIs_sum <- rep(0, length(uniqNbVars))
     activeVars_sum <- centers_sum <- IDs_sum <- list()
     lambdas_sum <- rep(0, length(uniqNbVars))
     for (j in 1:length(uniqNbVars)) {
@@ -360,9 +331,9 @@ extractClusterInfo <- function(HTKmeans.out,
       
       best.one            <- simInds[which.min(objective[simInds])]
       WCSS_sum[j]         <- WCSS[best.one]
+      WCSS_nonZero_sum[j] <- WCSS_nonZero[best.one]
       objective_sum[j]    <- objective[best.one]
       penalty_sum[j]      <- penalty[best.one]
-      WCSS_nonZero_sum[j] <- WCSS_nonZero[best.one]
       nbActiveVars_sum[j] <- nbActiveVars[best.one]
       activeVars_sum[[j]] <- activeVars[[best.one]]
       centers_sum[[j]]    <- centers[[best.one]]

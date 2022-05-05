@@ -40,13 +40,20 @@ The algorithm starts by generating a number of sparse starting values. This is d
 Raymaekers and Zamar (2022) for details. 
 }
 \value{
-Return a list with length equal to the number of lambda values supplied in \code{lambdas} plus one.
+A list with components: \cr
+  \itemize{
+  \item{\code{HTKmeans.out} \cr
+  A list with length equal to the number of lambda values supplied in \code{lambdas}.
 Each element of this list is in turn a list containing
 \item{centers }{A matrix of cluster centres.}
 \item{cluster }{A vector of integers (from 1:\code{k}) indicating the cluster to which each point is allocated.}
 \item{itnb }{The number of iterations executed until convergence}
 \item{converged }{Whether the algorithm stopped by converging or through reaching the maximum number of itertions.}
-The final element \code{inputargs} contains the input arguments to the funciton.
+  }
+  \item{\code{inputargs} \cr
+   the input arguments to the function.
+  }
+  }
 }
 \references{
 Raymaekers, Jakob, and Ruben H. Zamar. "Regularized K-means through hard-thresholding." arXiv preprint arXiv:2010.00950 (2020).
@@ -62,5 +69,5 @@ J. Raymaekers and R.H. Zamar
 X <- iris[, 1:4]
 HTKmeans.out <- HTKmeans(X, k = 3, lambdas = 0.8)
 HTKmeans.out[[1]]$centers
-pairs(X, col = HTKmeans.out[[1]]$clustID)
+pairs(X, col = HTKmeans.out[[1]]$cluster)
 }

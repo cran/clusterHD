@@ -1,8 +1,8 @@
 Package: clusterHD
 Type: Package
 Title: Tools for Clustering High-Dimensional Data
-Version: 1.0.0
-Date: 2022-04-08
+Version: 1.0.1
+Date: 2022-05-05
 Authors@R: c(
             person(given="Jakob",family="Raymaekers", role = c("aut","cre"),
             email="j.raymaekers@maastrichtuniversity.nl"),
@@ -22,6 +22,6 @@ RoxygenNote: 7.1.2
 Imports: Rcpp (>= 1.0.7), stats, mclust, Ckmeans.1d.dp, cluster
 LinkingTo: Rcpp, RcppArmadillo
 NeedsCompilation: yes
-Packaged: 2022-04-13 11:01:46 UTC; u0105404
+Packaged: 2022-05-05 14:44:35 UTC; u0105404
 Repository: CRAN
-Date/Publication: 2022-04-14 09:32:29 UTC
+Date/Publication: 2022-05-05 15:20:05 UTC
