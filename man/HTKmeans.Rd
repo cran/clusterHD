@@ -8,9 +8,12 @@ HTK-Means Clustering
 Perform HTK-means clustering (Raymaekers and Zamar, 2022) on a data matrix.
 }
 \usage{
-HTKmeans(X, k, lambdas,
+HTKmeans(X, k, lambdas = NULL,
          standardize = TRUE,
-         iter.max = 100, nstart = 100)
+         iter.max = 100, nstart = 100,
+         nlambdas = 50,
+         lambda_max = 1,
+         verbose = FALSE)
 }
 %- maybe also 'usage' for other objects documented here.
 \arguments{
@@ -21,6 +24,7 @@ the number of clusters.
 }
 \item{lambdas}{
 a vector of values for the regularization parameter \code{lambda}.
+Defaults to \code{NULL}, which generates a sequence of values automatically.
 }
 \item{standardize}{
 logical flag for standardization to mean 0 and variance 1 of
@@ -33,6 +37,16 @@ the maximum number of iterations allowed.
 \item{nstart}{
 number of starts used when k-means is applied to generate
 the starting values for HTK-means. See below for more info.
+}
+\item{nlambdas}{
+Number of lambda values to generate automatically.
+}
+\item{lambda_max}{
+Maximum value for the regularization paramater \eqn{lambda}. If
+\code{standardize = TRUE}, the default of 1 works well.
+}
+\item{verbose}{
+Whether or not to print progress. Defaults to \code{FALSE}.
 }
 }
 \details{

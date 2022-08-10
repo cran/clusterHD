@@ -2,10 +2,13 @@
 ## Main HTKmeans function ##
 ############################
 
-HTKmeans <- function(X, k, lambdas,
+HTKmeans <- function(X, k, lambdas = NULL,
                      standardize = TRUE,
                      iter.max = 100,
-                     nstart = 100) {
+                     nstart = 100,
+                     nlambdas = 50,
+                     lambda_max = 1,
+                     verbose = FALSE) {
   # Regularized k-means for a fixed value of k over a grid of lambda
   # values 
   #
@@ -39,40 +42,220 @@ HTKmeans <- function(X, k, lambdas,
                                  iter.max = iter.max,
                                  nstart = nstart)
   
-  for (i in 1:length(lambdas)) {
+  if (is.null(lambdas)) { # automatic grid selection
+    
+    lambdas <- c(0, lambda_max)
+    nbPar   <- rep(0, 2)
+    
     centers <- list()
     objvals <- rep(0, length(startval.out))
     for (j in 1:length(startval.out)) {
       centers[[j]]  <- getCenters_cpp2(X = X,
-                                  clusID = startval.out[[j]],
-                                  k = k,
-                                  lambda = lambdas[i])$centers
+                                       clusID = startval.out[[j]],
+                                       k = k,
+                                       lambda = lambdas[1])$centers
       objvals[j]    <- getObjective_cpp(X, centers[[j]],
                                         startval.out[[j]],
-                                        lambdas[i])$obj
+                                        lambdas[1])$obj
+    }
+    # initial centers and IDs:
+    centers <- centers[[which.min(objvals)]]
+    IDs     <- startval.out[[which.min(objvals)]]
+    
+    HTKmeans.out[[1]] <- HTKmeans_inner_cpp(X,
+                                            centers,
+                                            IDs,
+                                            lambdas[1],
+                                            iter.max)
+    nbPar[1] <- sum(colSums(abs(HTKmeans.out[[1]]$centers)) > 0)
+    
+    centers <- list()
+    objvals <- rep(0, length(startval.out))
+    for (j in 1:length(startval.out)) {
+      centers[[j]]  <- getCenters_cpp2(X = X,
+                                       clusID = startval.out[[j]],
+                                       k = k,
+                                       lambda = lambdas[2])$centers
+      objvals[j]    <- getObjective_cpp(X, centers[[j]],
+                                        startval.out[[j]],
+                                        lambdas[2])$obj
     }
     # initial centers and IDs:
     centers <- centers[[which.min(objvals)]]
     IDs     <- startval.out[[which.min(objvals)]]
     
     
-    HTKmeans.out[[i]] <- HTKmeans_inner_cpp(X,
+    HTKmeans.out[[2]] <- HTKmeans_inner_cpp(X,
                                             centers,
                                             IDs,
-                                            lambdas[i],
+                                            lambdas[2],
                                             iter.max)
-    if (max(abs(HTKmeans.out[[i]]$centers)) < 1e-10) {
-      HTKmeans.out[[i]]$cluster <- rep(0, dim(X)[1])
-      if (i < length(lambdas)) {
-        for (j in (i + 1):length(lambdas)) {
-          HTKmeans.out[[j]] <- HTKmeans.out[[i]]
+    nbPar[2] <- sum(colSums(abs(HTKmeans.out[[2]]$centers)) > 0)
+    
+    
+    ## start
+    forbiddenSplits <- c()
+    nusefulLambdas  <- 2
+    usefulLambdas   <- c(1, 2)# indices of useful Lambdas in sorted lambda vector
+    
+    while (nusefulLambdas < nlambdas) {
+      lambda.order <- order(lambdas)
+      lambdas      <- lambdas[lambda.order]
+      nbPar        <- nbPar[lambda.order]
+      HTKmeans.out  <- HTKmeans.out[lambda.order]
+      
+      
+      
+      orderedDiffs <- order(diff(log(pmax(1, nbPar), 2)))
+      low_idx      <- orderedDiffs[min(which(!orderedDiffs %in% forbiddenSplits))]
+      lambda_low   <- lambdas[low_idx]
+      lambda_high  <- lambdas[low_idx + 1]
+      newLambda    <- (lambda_low + lambda_high) / 2
+      
+      
+      
+      centers <- list()
+      objvals <- rep(0, length(startval.out))
+      for (j in 1:length(startval.out)) {
+        centers[[j]]  <- getCenters_cpp2(X = X,
+                                         clusID = startval.out[[j]],
+                                         k = k,
+                                         lambda = newLambda)$centers
+        objvals[j]    <- getObjective_cpp(X, centers[[j]],
+                                          startval.out[[j]],
+                                          newLambda)$obj
+      }
+      # initial centers and IDs:
+      centers <- centers[[which.min(objvals)]]
+      IDs     <- startval.out[[which.min(objvals)]]
+      
+      
+      candidateOut <- HTKmeans_inner_cpp(X, centers,
+                                         IDs,
+                                         newLambda,
+                                         iter.max)
+      newNbPars <- sum(colSums(abs(candidateOut$centers)) > 0)
+      
+      
+      if (newNbPars > nbPar[low_idx] | newNbPars < nbPar[low_idx + 1]) {
+        # this is unusual, though not impossible.
+        # So we recheck the solution by iterating the soltuions
+        # left and right from the new lambda until convergence with
+        # the new lambda parameter as regularization
+        
+        HTKmeans.out_down <- HTKmeans_inner_cpp(X, HTKmeans.out[[low_idx]]$centers,
+                                                HTKmeans.out[[low_idx]]$cluster,
+                                                newLambda,
+                                                iter.max)
+        
+        HTKmeans.out_up <- HTKmeans_inner_cpp(X, HTKmeans.out[[low_idx + 1]]$centers,
+                                              HTKmeans.out[[low_idx + 1]]$cluster,
+                                              newLambda,
+                                              iter.max)
+        
+        objVals <- c(getObjective_cpp(X, candidateOut$centers,
+                                      candidateOut$cluster,
+                                      newLambda)$obj,
+                     getObjective_cpp(X, HTKmeans.out_down$centers,
+                                      HTKmeans.out_down$cluster,
+                                      newLambda)$obj,
+                     getObjective_cpp(X, HTKmeans.out_up$centers,
+                                      HTKmeans.out_up$cluster,
+                                      newLambda)$obj)
+        if (which.min(objVals) == 2) {
+          candidateOut <- HTKmeans.out_down
         }
+        if (which.min(objVals) == 3) {
+          candidateOut <- HTKmeans.out_up
+        }
+      }
+      
+      
+      newNbPars <- sum(colSums(abs(candidateOut$centers)) > 0)
+      
+      
+      
+      HTKmeans.out[[length(lambdas) + 1]] <- candidateOut
+      nbPar[length(lambdas) + 1] <- sum(abs(candidateOut$centers) > 0)
+      lambdas[length(lambdas) + 1] <- newLambda
+      # print(paste0("newLambda = ", newLambda, " || nbPar = ", nbPar[length(lambdas)]  ))
+      forbiddenSplits[which(forbiddenSplits > low_idx)] <- forbiddenSplits[which(forbiddenSplits > low_idx)] + 1
+      usefulLambdas[which(usefulLambdas > low_idx)] <- usefulLambdas[which(usefulLambdas > low_idx)] + 1
+      
+      
+      if ((newNbPars == nbPar[low_idx])) {
+        forbiddenSplits <- c(forbiddenSplits, low_idx)
+      } else if ((newNbPars == nbPar[low_idx + 1])) {
+        forbiddenSplits <- c(forbiddenSplits, low_idx + 1)# don't split on new lambda
+      } else {
+        nusefulLambdas <- nusefulLambdas + 1
+        usefulLambdas <- c(usefulLambdas, low_idx + 1)
+        if (verbose) {
+          print(nusefulLambdas / nlambdas)
+        }
+      }
+      
+      if (newLambda - lambda_low < 1e-3) {
+        forbiddenSplits <- c(forbiddenSplits, low_idx)
+      }
+      if (lambda_high - newLambda < 1e-3) {
+        forbiddenSplits <- c(forbiddenSplits, low_idx + 1)
+      }
+      if (length(unique(forbiddenSplits)) == (length(lambdas) - 1)) {
         break
+      }
+    }
+    lambda.order <- order(lambdas)
+    lambdas      <- lambdas[lambda.order]
+    nbPar        <- nbPar[lambda.order]
+    HTKmeans.out <- HTKmeans.out[lambda.order]
+    
+    usefulLambdas <- sort(usefulLambdas)
+    lambdas       <- lambdas[usefulLambdas]
+    nbPar         <- nbPar[usefulLambdas]
+    HTKmeans.out  <- HTKmeans.out[usefulLambdas]
+    ## stop
+    
+    
+    
+    
+  } else {
+    for (i in 1:length(lambdas)) {
+      centers <- list()
+      objvals <- rep(0, length(startval.out))
+      for (j in 1:length(startval.out)) {
+        centers[[j]]  <- getCenters_cpp2(X = X,
+                                         clusID = startval.out[[j]],
+                                         k = k,
+                                         lambda = lambdas[i])$centers
+        objvals[j]    <- getObjective_cpp(X, centers[[j]],
+                                          startval.out[[j]],
+                                          lambdas[i])$obj
+      }
+      # initial centers and IDs:
+      centers <- centers[[which.min(objvals)]]
+      IDs     <- startval.out[[which.min(objvals)]]
+      
+      
+      HTKmeans.out[[i]] <- HTKmeans_inner_cpp(X,
+                                              centers,
+                                              IDs,
+                                              lambdas[i],
+                                              iter.max)
+      if (max(abs(HTKmeans.out[[i]]$centers)) < 1e-10) {
+        HTKmeans.out[[i]]$cluster <- rep(0, dim(X)[1])
+        if (i < length(lambdas)) {
+          for (j in (i + 1):length(lambdas)) {
+            HTKmeans.out[[j]] <- HTKmeans.out[[i]]
+          }
+          break
+        }
       }
     }
   }
   output <- list()
   output$HTKmeans.out <- HTKmeans.out
+  output$lambdas   <- lambdas
   output$inputargs <- inputargs
   return(output)
 }
@@ -112,8 +295,8 @@ getClassicCenters <- function(X, clusID, k) {
 }
 
 getCenters2 <- function(X, clusID, k,
-                       lambda,
-                       iter.max = 100) {
+                        lambda,
+                        iter.max = 100) {
   # Updates the centers for the regularized k-means, assuming fixed
   # assignment of the observations to k clusters
   # args:
@@ -198,8 +381,8 @@ getStartvalues2 <- function(X, k, lambda,
           kmeans.out <- kmeans(X[, Inds], k, nstart = nstart)
         }
         centers[[i]]  <- getCenters2(X = X, clusID = kmeans.out$cluster, k = k,
-                                    lambda = lambda,
-                                    iter.max = iter.max)
+                                     lambda = lambda,
+                                     iter.max = iter.max)
         IDs[[i]]      <- kmeans.out$cluster
         objvals[i]    <- getObjective_cpp(X, centers[[i]],
                                           kmeans.out$cluster,lambda)$obj
@@ -225,14 +408,20 @@ diagPlot = function(HTKmeans.out, type = 1)  {
   on.exit(par(oldpar))
   
   if (type == 1) {
-    inputargs <- HTKmeans.out$inputargs
-    lambdas <- inputargs$lambdas
+    lambdas <- HTKmeans.out$lambdas
     
     plotdata <- sapply(1:length(lambdas),
                        function(z)
                          colSums(abs(HTKmeans.out$HTKmeans.out[[z]]$centers)))
-    xlims <- rev(range(inputargs$lambdas))
+    xlims <- rev(range(lambdas))
     
+    # visual adjustment
+    plotdata <- cbind(plotdata[, 1], plotdata,
+                      plotdata[, length(lambdas)])
+    lambdas <- c(lambdas[1], lambdas[2] - 1e-10,
+                 lambdas[2:(length(lambdas) - 1)],
+                 lambdas[(length(lambdas) - 1)] + 1e-10,
+                 lambdas[length(lambdas)]) 
     matplot(lambdas, t(plotdata), type = "l",
             xlab = expression(lambda), ylab = "norm of center vector",
             col = 1:ncol(plotdata), xlim = xlims, lwd = 4, lty = 1,
@@ -294,7 +483,7 @@ extractClusterInfo <- function(HTKmeans.out,
   # can be used to make diagnostic plots
   #
   
-  lambdas    <- HTKmeans.out$inputargs$lambdas
+  lambdas    <- HTKmeans.out$lambdas
   objective  <- penalty <- WCSS <- WCSS_nonZero <- nbActiveVars <- ARIs <- rep(0, length(lambdas))
   activeVars <- list()
   centers    <- list()
